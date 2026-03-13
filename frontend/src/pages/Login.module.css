@@ -1,0 +1,79 @@
+/* frontend/src/pages/LoginPage.module.css */
+
+.login {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    /* Use the same subtle marble texture for consistency */
+    background-image: url("https://www.transparenttextures.com/patterns/subtle-white-feathers.png");
+    background-color: var(--color-background);
+    padding: 1rem;
+  }
+  
+  .loginCard {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    padding: 3rem;
+    max-width: 450px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  }
+  
+  .logo {
+    margin-bottom: 0.5rem;
+  }
+  
+  .title {
+    font-family: var(--font-heading);
+    font-size: 3rem;
+    font-weight: 600;
+    color: var(--color-primary);
+    margin: 0;
+  }
+  
+  .tagline {
+    font-family: var(--font-body);
+    font-style: italic;
+    color: var(--color-text-secondary);
+    margin: 0.25rem 0 1.5rem 0;
+  }
+  
+  .description {
+    color: var(--color-text-primary);
+    line-height: 1.6;
+    margin-bottom: 2.5rem;
+  }
+  
+  .loginButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.8rem 1.5rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #ffffff;
+    background-color: #24292e; /* GitHub's dark color */
+    border: 1px solid #24292e;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+  }
+  
+  .loginButton:hover {
+    background-color: #3a4148;
+  }
+  
+  .loadingScreen {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-size: 1.5rem;
+    color: var(--color-text-secondary);
+    font-family: var(--font-heading);
+  }

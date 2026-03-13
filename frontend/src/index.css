@@ -1,0 +1,28 @@
+/* frontend/src/index.css */
+
+:root {
+  /* Fonts */
+  --font-heading: 'Cinzel', serif;
+  --font-body: 'Lato', sans-serif;
+
+  /* Colors */
+  --color-background: #f8f9fa; /* Off-white, like clean marble */
+  --color-text-primary: #212529; /* Dark, near-black for readability */
+  --color-text-secondary: #6c757d; /* Soft gray for descriptions */
+  --color-primary: #3a5a9c;     /* A deep, Santorini-like blue */
+  --color-accent: #d4af37;      /* Gold for important accents */
+  --color-surface: #ffffff;    /* The surface of cards and components */
+  --color-border: #dee2e6;     /* Light border for cards */
+
+  /* Font-smoothing for better text rendering */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-body);
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+}

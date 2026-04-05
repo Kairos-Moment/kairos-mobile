@@ -2,17 +2,23 @@
 
 const express = require("express");
 const passport = require("passport");
-const jwt = require("jsonwebtoken");
 const router = express.Router();
 const { ensureAuthenticated } = require('../middleware/auth.middleware');
 
-const JWT_SECRET = process.env.SESSION_SECRET || 'fallback_secret';
-
-// --- 1. CONFIGURATION ---
+// --- 1. DETERMINE REDIRECT URL ---
+// This Logic handles both Dev and Prod automatically:
+// Priority 1: CLIENT_URL (Best practice: explicit variable in your .env)
+// Priority 2: CORS_ORIGIN (Fallback: usually points to your frontend)
+// Priority 3: Hardcoded Localhost (Safety net)
 const FRONTEND_URL = process.env.CLIENT_URL || process.env.CORS_ORIGIN || "http://localhost:5173";
-const MOBILE_REDIRECT_URI = process.env.MOBILE_REDIRECT_URI || "mobile://--/login-success";
 
 // --- 2. PROTECTED ROUTES ---
+// Only accessible if logged in
+
+/**
+ * @route GET /api/auth/login/success
+ * @description Frontend calls this to check if the user is logged in.
+ */
 router.get("/login/success", ensureAuthenticated, (req, res) => {
   res.status(200).json({
     success: true,
@@ -21,11 +27,17 @@ router.get("/login/success", ensureAuthenticated, (req, res) => {
   });
 });
 
+/**
+ * @route GET /api/auth/logout
+ * @description Logs user out and clears session.
+ */
 router.get("/logout", ensureAuthenticated, (req, res, next) => {
   req.logout((err) => {
     if (err) return next(err);
+
     req.session.destroy((err) => {
       if (err) return next(err);
+
       res.clearCookie("connect.sid");
       res.status(200).json({ success: true, message: "Logged out successfully." });
     });
@@ -33,71 +45,52 @@ router.get("/logout", ensureAuthenticated, (req, res, next) => {
 });
 
 // --- 3. PUBLIC ROUTES ---
+// GitHub Authentication Entry Points
 
+/**
+ * @route GET /api/auth/github
+ * @description Start the GitHub login process.
+ */
 router.get(
   "/github",
-  (req, res, next) => {
-    const isMobile = req.query.platform === 'mobile';
-    req.session.isMobileAuth = isMobile;
-
-    if (req.query.redirect_uri) {
-      req.session.mobileRedirectHint = req.query.redirect_uri;
-    }
-
-    const strategy = isMobile ? "github-mobile" : "github";
-    passport.authenticate(strategy, {
-      scope: ["read:user"],
-      state: isMobile ? 'mobile' : 'web'
-    })(req, res, next);
-  }
+  passport.authenticate("github", {
+    scope: ["read:user"],
+  })
 );
 
+/**
+ * @route GET /api/auth/github/callback
+ * @description GitHub redirects here after user approves.
+ */
 router.get(
   "/github/callback",
   (req, res, next) => {
-    const isMobile = req.query.state === 'mobile' || req.session.isMobileAuth;
-    const strategy = isMobile ? "github-mobile" : "github";
-
-    // Determine fallback redirect
-    const fallback = req.session.mobileRedirectHint || MOBILE_REDIRECT_URI;
-    const failureRedirect = isMobile ? fallback : `${FRONTEND_URL}/login`;
-
-    passport.authenticate(strategy, {
-      failureRedirect,
-      session: true
-    })(req, res, next);
-  },
-  (req, res) => {
-    const isMobile = req.query.state === 'mobile' || req.session.isMobileAuth;
-
-    if (!req.user) {
-      console.error("Critical Auth Error: No user object found after success.");
-      const fallback = req.session.mobileRedirectHint || MOBILE_REDIRECT_URI;
-      return res.redirect(isMobile ? fallback : `${FRONTEND_URL}/login`);
-    }
-
-    // Force session to save before redirecting
-    req.session.save((err) => {
+    passport.authenticate("github", (err, user, info) => {
       if (err) {
-        console.error("Session Save Error:", err);
+        console.error("Passport Authenticate Error:", err);
+        return res.status(500).send(`Authentication Error: ${err.message}`);
       }
-
-      if (isMobile) {
-        // --- JWT TOKEN FOR MOBILE BRIDGE ---
-        // We sign a token that the mobile app can use to bypass cookie limitations
-        const token = jwt.sign({ id: req.user.id }, JWT_SECRET, { expiresIn: '30d' });
-
-        const target = req.session.mobileRedirectHint || MOBILE_REDIRECT_URI || "mobile://--/login-success";
-        const redirectUrl = target.includes('?')
-          ? `${target}&success=true&token=${token}`
-          : `${target}?success=true&token=${token}`;
-
-        console.log(`[AUTH SUCCESS] Redirecting Mobile with Token: ${req.user.username}`);
-        res.redirect(redirectUrl);
-      } else {
-        res.redirect(`${FRONTEND_URL}/`);
+      if (!user) {
+        console.warn("Passport Authenticate - No User Found:", info);
+        return res.redirect(`${FRONTEND_URL}/login`);
       }
-    });
+      req.logIn(user, (err) => {
+        if (err) {
+          console.error("Passport LogIn Error:", err);
+          return res.status(500).send(`Login Error: ${err.message}`);
+        }
+
+        console.log(`GitHub Login Success. User ID: ${user.id}`);
+
+        req.session.save((err) => {
+          if (err) {
+            console.error("Session save error:", err);
+            return res.redirect(`${FRONTEND_URL}/login`);
+          }
+          res.redirect(`${FRONTEND_URL}/`);
+        });
+      });
+    })(req, res, next);
   }
 );
 

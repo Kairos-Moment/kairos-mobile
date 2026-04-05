@@ -6,10 +6,11 @@ import apiClient from '../api/axios';
 import styles from './FocusSession.module.css';
 import {
   IoPlay, IoPause, IoRefresh, IoMusicalNotes,
-  IoCheckmarkCircle, IoLogoYoutube, IoSave
+  IoCheckmarkCircle, IoLogoYoutube, IoSave, IoTrash
 } from 'react-icons/io5';
-import { getSavedTracks, saveTrack, deleteTrack } from '../api/savedTracksAPI';
+import { getSavedTracks, saveTrack, saveAudioFile, deleteTrack } from '../api/savedTracksAPI';
 import LibraryModal from '../components/focus/LibraryModal';
+import { storeAudioBlob, getAudioBlobUrl, removeAudioBlob } from '../utils/offlineAudioDB';
 
 const GREEK_QUOTES = [
   "We suffer more often in imagination than in reality. — Seneca",
@@ -42,9 +43,12 @@ const FocusSession = () => {
   // Saved Tracks State
   const [savedTracks, setSavedTracks] = useState([]);
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const [encapsulationMode, setEncapsulationMode] = useState(false);
+  const [offlineTrackId, setOfflineTrackId] = useState(null); // active offline track id
 
   // --- REFS ---
   const audioRef = useRef(new Audio());
+  const offlineAudioRef = useRef(new Audio());
   const playerRef = useRef(null);
 
   // --- 1. SAFE YOUTUBE API LOADING ---
@@ -65,20 +69,36 @@ const FocusSession = () => {
 
   // --- 2. INITIALIZE PLAYER ---
   useEffect(() => {
-    // Check if YT and the Player constructor are available
     if (youtubeId && window.YT && window.YT.Player) {
       try {
         if (playerRef.current && typeof playerRef.current.loadVideoById === 'function') {
-          playerRef.current.cueVideoById(youtubeId);
+          // Use loadVideoById to switch immediately if active
+          if (isActive) {
+            playerRef.current.loadVideoById(youtubeId);
+          } else {
+            playerRef.current.cueVideoById(youtubeId);
+          }
         } else {
           playerRef.current = new window.YT.Player('youtube-player', {
             height: '0',
             width: '0',
             videoId: youtubeId,
-            playerVars: { autoplay: 0, loop: 1, playlist: youtubeId },
+            playerVars: {
+              autoplay: 0,
+              loop: 1,
+              playlist: youtubeId,
+              controls: 0,
+              modestbranding: 1
+            },
             events: {
               onReady: (event) => {
                 if (isActive) event.target.playVideo();
+              },
+              onStateChange: (event) => {
+                // If the video ends (0), and we are still active, restart it
+                if (event.data === window.YT.PlayerState.ENDED && isActive) {
+                  event.target.playVideo();
+                }
               },
               onError: (e) => console.error("YT Player Error", e)
             }
@@ -93,7 +113,11 @@ const FocusSession = () => {
   // --- 3. SYNC PLAY/PAUSE ---
   useEffect(() => {
     if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
-      isActive ? playerRef.current.playVideo() : playerRef.current.pauseVideo();
+      if (isActive) {
+        playerRef.current.playVideo();
+      } else {
+        playerRef.current.pauseVideo();
+      }
     }
   }, [isActive]);
 
@@ -116,7 +140,6 @@ const FocusSession = () => {
         const pending = res.data.filter(t => t.status !== 'completed');
         setTasks(pending);
 
-        // Detect Task ID from URL
         const params = new URLSearchParams(location.search);
         const tid = params.get('taskId');
         if (tid) setSelectedTaskId(tid);
@@ -124,7 +147,6 @@ const FocusSession = () => {
         console.error("Task fetch failed", err);
       }
     };
-    loadTasks();
     loadTasks();
   }, [location.search]);
 
@@ -144,14 +166,54 @@ const FocusSession = () => {
 
   // --- 6. BUILT-IN AUDIO ---
   useEffect(() => {
+    const audio = audioRef.current;
+
+    const handleEnded = () => {
+      if (isActive) {
+        audio.currentTime = 0;
+        audio.play().catch(() => { });
+      }
+    };
+
     if (audioUrl && !youtubeId) {
-      audioRef.current.src = audioUrl;
-      audioRef.current.loop = true;
-      isActive ? audioRef.current.play().catch(() => { }) : audioRef.current.pause();
+      audio.src = audioUrl;
+      audio.loop = true;
+      audio.addEventListener('ended', handleEnded);
+      if (isActive) {
+        audio.play().catch(() => { });
+      } else {
+        audio.pause();
+      }
     } else {
-      audioRef.current.pause();
+      audio.pause();
+      audio.removeEventListener('ended', handleEnded);
     }
+
+    return () => {
+      audio.removeEventListener('ended', handleEnded);
+    };
   }, [audioUrl, isActive, youtubeId]);
+
+  // --- 7. OFFLINE AUDIO (Encapsulation Mode) ---
+  useEffect(() => {
+    const audio = offlineAudioRef.current;
+    if (!offlineTrackId) {
+      audio.pause();
+      return;
+    }
+    let blobUrl = null;
+    getAudioBlobUrl(offlineTrackId).then((url) => {
+      if (!url) return;
+      blobUrl = url;
+      audio.src = url;
+      audio.loop = true;
+      if (isActive) audio.play().catch(() => {});
+    });
+    return () => {
+      audio.pause();
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [offlineTrackId, isActive]);
 
   // --- HANDLERS ---
   const handleYoutubeSubmit = (e) => {
@@ -190,6 +252,11 @@ const FocusSession = () => {
     if (window.confirm("Remove from library?")) {
       try {
         await deleteTrack(id);
+        await removeAudioBlob(id);
+        if (offlineTrackId === id) {
+          setOfflineTrackId(null);
+          offlineAudioRef.current.pause();
+        }
         setSavedTracks(prev => prev.filter(t => t.id !== id));
       } catch (err) {
         console.error(err);
@@ -198,15 +265,45 @@ const FocusSession = () => {
   };
 
   const loadSavedTrack = (track) => {
-    setYoutubeId(track.youtube_id);
-    setAudioUrl('');
-    setYtInput(`https://youtu.be/${track.youtube_id}`); // Update input for visibility
+    if (track.file_path) {
+      // Offline track — play via offlineAudioRef
+      offlineAudioRef.current.pause();
+      setOfflineTrackId(track.id);
+      setYoutubeId('');
+      setAudioUrl('');
+      setYtInput('');
+    } else {
+      // YouTube track
+      setOfflineTrackId(null);
+      offlineAudioRef.current.pause();
+      setYoutubeId(track.youtube_id);
+      setAudioUrl('');
+      setYtInput(`https://youtu.be/${track.youtube_id}`);
+    }
+  };
+
+  const handleUploadTrack = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const title = prompt(`Name this track (${file.name}):`);
+    if (!title) return;
+    try {
+      const saved = await saveAudioFile(title, file);
+      // Store the raw file blob locally so playback works offline
+      await storeAudioBlob(saved.id, file);
+      await fetchTracks();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to upload track.");
+    }
+    e.target.value = '';
   };
 
   const handleSessionComplete = async () => {
     setIsActive(false);
     if (playerRef.current?.pauseVideo) playerRef.current.pauseVideo();
     if (audioRef.current) audioRef.current.pause();
+    if (offlineAudioRef.current) offlineAudioRef.current.pause();
 
     if (!selectedTaskId || !sessionStartTime) {
       resetTimer();
@@ -235,6 +332,7 @@ const FocusSession = () => {
     setTimeLeft(customMinutes * 60);
     setSessionStartTime(null);
     if (playerRef.current?.stopVideo) playerRef.current.stopVideo();
+    if (offlineAudioRef.current) offlineAudioRef.current.pause();
   };
 
   const toggleTimer = () => {
@@ -297,45 +395,104 @@ const FocusSession = () => {
 
           <div className={styles.audioSection}>
             <div className={styles.audioTitle}><IoMusicalNotes /> Focus Music</div>
-            <form onSubmit={handleYoutubeSubmit} className={styles.ytForm}>
-              <IoLogoYoutube className={styles.ytIcon} />
-              <input
-                type="text" placeholder="YouTube Link" value={ytInput}
-                onChange={(e) => setYtInput(e.target.value)} className={styles.ytInput}
-              />
-              <div style={{ display: 'flex', gap: '5px' }}>
-                <button type="submit" className={styles.ytBtn}>Set</button>
-                <button type="button" onClick={handleSaveCurrentTrack} className={styles.saveIconBtn} title="Save to Library">
-                  <IoSave />
-                </button>
-              </div>
-            </form>
-            <div className={styles.audioButtons}>
-              <button onClick={() => { setYoutubeId(''); setAudioUrl(''); }} className={!audioUrl && !youtubeId ? styles.activeAudio : ''}>None</button>
-              {AMBIENT_TRACKS.map(track => (
-                <button
-                  key={track.name}
-                  onClick={() => { setAudioUrl(track.url); setYoutubeId(''); }}
-                  className={audioUrl === track.url ? styles.activeAudio : ''}
-                >
-                  {track.name}
-                </button>
-              ))}
-            </div>
 
-            {/* Library Open Button */}
-            <div style={{ marginTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem' }}>
+            {/* Encapsulation Mode Toggle */}
+            <div className={styles.encapsulationRow}>
+              <span className={styles.encapsulationLabel}>Encapsulation Mode</span>
               <button
                 type="button"
-                onClick={() => setIsLibraryOpen(true)}
-                className={styles.secondaryBtn}
-                style={{ width: '100%' }}
+                className={`${styles.toggleSwitch} ${encapsulationMode ? styles.toggleOn : ''}`}
+                onClick={() => {
+                  setEncapsulationMode(prev => !prev);
+                  setYoutubeId('');
+                  setAudioUrl('');
+                  setYtInput('');
+                }}
+                aria-pressed={encapsulationMode}
+                aria-label="Toggle Encapsulation Mode"
               >
-                <IoMusicalNotes /> Open Personal Library
+                <span className={styles.toggleThumb} />
               </button>
+              <span className={styles.encapsulationHint}>
+                {encapsulationMode ? 'Offline Playlist' : 'YouTube Link'}
+              </span>
             </div>
 
-            {/* Library Modal */}
+            {!encapsulationMode ? (
+              /* YouTube Mode */
+              <>
+                <form onSubmit={handleYoutubeSubmit} className={styles.ytForm}>
+                  <IoLogoYoutube className={styles.ytIcon} />
+                  <input
+                    type="text" placeholder="YouTube Link" value={ytInput}
+                    onChange={(e) => setYtInput(e.target.value)} className={styles.ytInput}
+                  />
+                  <div style={{ display: 'flex', gap: '5px' }}>
+                    <button type="submit" className={styles.ytBtn}>Set</button>
+                    <button type="button" onClick={handleSaveCurrentTrack} className={styles.saveIconBtn} title="Save to Library">
+                      <IoSave />
+                    </button>
+                  </div>
+                </form>
+                <div className={styles.audioButtons}>
+                  <button onClick={() => { setYoutubeId(''); setAudioUrl(''); }} className={!audioUrl && !youtubeId ? styles.activeAudio : ''}>None</button>
+                  {AMBIENT_TRACKS.map(track => (
+                    <button
+                      key={track.name}
+                      onClick={() => { setAudioUrl(track.url); setYoutubeId(''); }}
+                      className={audioUrl === track.url ? styles.activeAudio : ''}
+                    >
+                      {track.name}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              /* Encapsulation Mode — Offline Playlist */
+              <div className={styles.playlistPanel}>
+                <label className={styles.uploadBtn} title="Upload audio file">
+                  ＋ Add Audio File
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    style={{ display: 'none' }}
+                    onChange={handleUploadTrack}
+                  />
+                </label>
+                {offlineTrackId && (
+                  <div className={styles.nowPlaying}>
+                    <IoMusicalNotes className={styles.nowPlayingIcon} />
+                    <span>Now playing: {savedTracks.find(t => t.id === offlineTrackId)?.title || 'Track'}</span>
+                  </div>
+                )}
+                {savedTracks.filter(t => t.file_path).length === 0 ? (
+                  <p className={styles.emptyPlaylist}>No offline tracks yet. Upload an audio file above.</p>
+                ) : (
+                  <ul className={styles.playlistList}>
+                    {savedTracks.filter(t => t.file_path).map(track => (
+                      <li
+                        key={track.id}
+                        className={`${styles.playlistItem} ${offlineTrackId === track.id ? styles.activeTrack : ''}`}
+                        onClick={() => loadSavedTrack(track)}
+                      >
+                        <IoMusicalNotes className={styles.playlistIcon} />
+                        <span className={styles.playlistTitle}>{track.title}</span>
+                        {offlineTrackId === track.id && <span className={styles.playingBadge}>▶</span>}
+                        <button
+                          className={styles.deleteTrackBtn}
+                          onClick={(e) => { e.stopPropagation(); handleDeleteTrack(track.id); }}
+                          title="Remove track"
+                        >
+                          <IoTrash />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {/* Library Modal (still accessible from YouTube mode via save) */}
             <LibraryModal
               isOpen={isLibraryOpen}
               onClose={() => setIsLibraryOpen(false)}

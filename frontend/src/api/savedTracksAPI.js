@@ -10,6 +10,16 @@ export const saveTrack = async (title, youtubeId) => {
     return response.data;
 };
 
+export const saveAudioFile = async (title, file) => {
+    const formData = new FormData();
+    formData.append('title', title);
+    formData.append('audio', file);
+    const response = await apiClient.post('/saved-tracks', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+};
+
 export const deleteTrack = async (id) => {
     const response = await apiClient.delete(`/saved-tracks/${id}`);
     return response.data;

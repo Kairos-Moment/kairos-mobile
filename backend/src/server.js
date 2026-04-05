@@ -15,7 +15,7 @@ const passport = require("passport");
 const session = require("express-session");
 const pgSession = require('connect-pg-simple')(session);
 const { pool } = require('./config/database');
-const { GitHub, GitHubMobile } = require("./config/auth");
+const { GitHub } = require("./config/auth");
 
 // --- 3. INITIALIZATION ---
 const app = express();
@@ -44,6 +44,7 @@ app.use(
 );
 
 app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Proxy Configuration
 // Only trust the proxy if we are actually behind one (Production)
@@ -82,7 +83,6 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 passport.use(GitHub);
-passport.use(GitHubMobile);
 
 // Passport Serialization
 passport.serializeUser((user, done) => {
@@ -114,6 +114,7 @@ const savedTracksRoutes = require('./routes/saved-tracks.routes'); // NEW
 const habitLogRoutes = require("./routes/habit-logs.routes");
 const authRoutes = require("./routes/auth.routes.js");
 
+app.use("/api/health", require("./routes/health.routes"));
 app.use("/api/insights", insightsRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/goals", goalRoutes);

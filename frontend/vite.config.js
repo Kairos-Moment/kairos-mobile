@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   // --- ADD THIS LINE ---
   // Tells Vite: "Look for .env files in the folder one level up (..)"
-  envDir: '../', 
+  envDir: '../',
   // --------------------
   server: {
     proxy: {
@@ -16,7 +16,6 @@ export default defineConfig({
         target: 'http://localhost:5001', // Your backend server
         changeOrigin: true, // Needed for virtual hosted sites
         secure: false,      // Set to false if your backend is not running on HTTPS
-        rewrite: (path) => path.replace(/^\/api/, ''), // Remove /api prefix when forwarding
       },
     },
   },

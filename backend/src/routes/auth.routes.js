@@ -85,12 +85,12 @@ router.get(
 
 router.get("/github/mobile", (req, res) => {
   const { redirect_uri } = req.query;
-  // Store the mobile app's deep link so the callback can redirect back to it
   req.session.mobileRedirectUri = redirect_uri || process.env.MOBILE_REDIRECT_URI;
 
+  // Don't pass redirect_uri to GitHub — it must exactly match the registered
+  // callback URL. Instead let GitHub use the one registered in the OAuth app.
   const params = new URLSearchParams({
     client_id: process.env.GITHUB_CLIENT_ID_MOBILE,
-    redirect_uri: process.env.GITHUB_CALLBACK_URL_MOBILE,
     scope: 'read:user',
   });
 

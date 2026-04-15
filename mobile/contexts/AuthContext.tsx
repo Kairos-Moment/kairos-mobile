@@ -56,7 +56,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 apiClient.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
             }
 
-            const response = await apiClient.get('/auth/login/success');
+            const response = await apiClient.get('/auth/login/success', { timeout: 5000 });
             if (response.status === 200 && response.data.success) {
                 console.log("[AUTH] Logged in as:", response.data.user.username);
                 setUser(response.data.user);
@@ -67,7 +67,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 setIsAuthenticated(false);
             }
         } catch (error) {
-            console.log("[AUTH] Auth check failed (unauthorized).");
+            console.log("[AUTH] Auth check failed (unauthorized or unreachable).");
             setUser(null);
             setIsAuthenticated(false);
         } finally {
@@ -120,27 +120,34 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const login = async () => {
+        // Use the custom scheme from app.json ("mobile") so the OS can intercept the redirect
         const redirectUri = AuthSession.makeRedirectUri({
-            path: 'login-success'
+            scheme: 'mobile',
+            path: 'login-success',
         });
 
-        console.log("[AUTH] Login initiated. Expecting redirect to:", redirectUri);
-        const authUrl = `${apiClient.defaults.baseURL}/auth/github?platform=mobile&redirect_uri=${encodeURIComponent(redirectUri)}`;
+        console.log("[AUTH] Login initiated. Redirect URI:", redirectUri);
+        const authUrl = `${apiClient.defaults.baseURL}/auth/github/mobile?redirect_uri=${encodeURIComponent(redirectUri)}`;
 
         try {
             const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
-            console.log("[AUTH] Browser closed:", result.type);
+            console.log("[AUTH] Browser result:", result.type);
 
-            if (result.type === 'success' || (result as any).url) {
-                const url = (result as any).url || '';
-                const { queryParams } = Linking.parse(url);
+            // Extract the URL whether it came back as 'success' or embedded in result
+            const resultUrl = result.type === 'success' ? (result as any).url : null;
+
+            if (resultUrl) {
+                const { queryParams } = Linking.parse(resultUrl);
 
                 if (queryParams?.token) {
-                    console.log("[AUTH] Token extracted from browser URL.");
+                    console.log("[AUTH] Token received, setting up session...");
                     await setupToken(queryParams.token as string);
+                    await checkAuthStatus();
+                } else if (queryParams?.error) {
+                    Alert.alert("Login Failed", `GitHub auth error: ${queryParams.error}`);
                 }
-
-                await checkAuthStatus();
+            } else {
+                console.log("[AUTH] Browser closed without a redirect (user cancelled or redirect failed).");
             }
         } catch (error: any) {
             console.error("[AUTH] Login Error:", error);

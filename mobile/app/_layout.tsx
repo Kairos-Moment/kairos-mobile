@@ -4,6 +4,7 @@ import { useFonts } from 'expo-font';
 import { useRouter, useSegments, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
@@ -39,7 +40,11 @@ function RootLayoutNav() {
   }, [isAuthenticated, segments, isLoading]);
 
   if (isLoading) {
-    return null; // Or a splash screen
+    return (
+      <View style={{ flex: 1, backgroundColor: '#1a1a2e', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#d4af37" />
+      </View>
+    );
   }
 
   return (

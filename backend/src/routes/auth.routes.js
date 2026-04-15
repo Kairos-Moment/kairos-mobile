@@ -85,28 +85,37 @@ router.get(
 
 router.get("/github/mobile", (req, res) => {
   const { redirect_uri } = req.query;
-  req.session.mobileRedirectUri = redirect_uri || process.env.MOBILE_REDIRECT_URI;
+  const mobileRedirectUri = redirect_uri || process.env.MOBILE_REDIRECT_URI;
 
-  // Don't pass redirect_uri to GitHub — it must exactly match the registered
-  // callback URL. Instead let GitHub use the one registered in the OAuth app.
+  // Encode the mobile redirect URI in the state param so it survives the OAuth round-trip
+  const state = Buffer.from(JSON.stringify({ mobileRedirectUri })).toString('base64');
+
   const params = new URLSearchParams({
     client_id: process.env.GITHUB_CLIENT_ID_MOBILE,
     scope: 'read:user',
+    state,
   });
 
   res.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
 
 router.get("/github/mobile/callback", async (req, res) => {
-  const { code } = req.query;
-  const mobileRedirectUri = req.session.mobileRedirectUri || process.env.MOBILE_REDIRECT_URI;
+  const { code, state } = req.query;
+
+  // Recover the mobile redirect URI from state
+  let mobileRedirectUri = process.env.MOBILE_REDIRECT_URI;
+  try {
+    const decoded = JSON.parse(Buffer.from(state, 'base64').toString());
+    if (decoded.mobileRedirectUri) mobileRedirectUri = decoded.mobileRedirectUri;
+  } catch (e) {
+    console.warn('[MOBILE AUTH] Could not parse state param, using default redirect URI');
+  }
 
   if (!code) {
     return res.redirect(`${mobileRedirectUri}?error=no_code`);
   }
 
   try {
-    // Exchange code for GitHub access token
     const tokenRes = await axios.post(
       'https://github.com/login/oauth/access_token',
       {
@@ -119,8 +128,8 @@ router.get("/github/mobile/callback", async (req, res) => {
 
     const accessToken = tokenRes.data.access_token;
     if (!accessToken) {
-      console.error('[MOBILE AUTH] No access token returned:', tokenRes.data);
-      return res.redirect(`${mobileRedirectUri}?error=no_token`);
+      console.error('[MOBILE AUTH] No access token returned:', JSON.stringify(tokenRes.data));
+      return res.redirect(`${mobileRedirectUri}?error=no_token&detail=${encodeURIComponent(JSON.stringify(tokenRes.data))}`);
     }
 
     // Fetch GitHub user profile

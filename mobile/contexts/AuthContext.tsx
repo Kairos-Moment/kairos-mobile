@@ -120,11 +120,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const login = async () => {
-        // Use the custom scheme from app.json ("mobile") so the OS can intercept the redirect
-        const redirectUri = AuthSession.makeRedirectUri({
-            scheme: 'mobile',
-            path: 'login-success',
-        });
+        // In Expo Go, makeRedirectUri always generates an exp:// URI regardless of scheme config.
+        // We must use this exact URI as the mobile redirect target.
+        const redirectUri = AuthSession.makeRedirectUri();
 
         console.log("[AUTH] Login initiated. Redirect URI:", redirectUri);
         const authUrl = `${apiClient.defaults.baseURL}/auth/github/mobile?redirect_uri=${encodeURIComponent(redirectUri)}`;

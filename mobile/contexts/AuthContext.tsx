@@ -120,32 +120,33 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const login = async () => {
-        // In Expo Go, makeRedirectUri always generates an exp:// URI regardless of scheme config.
-        // We must use this exact URI as the mobile redirect target.
-        const redirectUri = AuthSession.makeRedirectUri();
-
+        // Hardcode the Expo Go redirect URI format with path so the deep link routes correctly
+        const redirectUri = AuthSession.makeRedirectUri({ path: 'login-success' });
         console.log("[AUTH] Login initiated. Redirect URI:", redirectUri);
+
         const authUrl = `${apiClient.defaults.baseURL}/auth/github/mobile?redirect_uri=${encodeURIComponent(redirectUri)}`;
 
         try {
             const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
-            console.log("[AUTH] Browser result:", result.type);
+            console.log("[AUTH] Browser result:", JSON.stringify(result));
 
-            // Extract the URL whether it came back as 'success' or embedded in result
             const resultUrl = result.type === 'success' ? (result as any).url : null;
 
             if (resultUrl) {
+                console.log("[AUTH] Result URL:", resultUrl);
                 const { queryParams } = Linking.parse(resultUrl);
+                console.log("[AUTH] Query params:", JSON.stringify(queryParams));
 
                 if (queryParams?.token) {
                     console.log("[AUTH] Token received, setting up session...");
                     await setupToken(queryParams.token as string);
                     await checkAuthStatus();
                 } else if (queryParams?.error) {
-                    Alert.alert("Login Failed", `GitHub auth error: ${queryParams.error}`);
+                    Alert.alert("Login Failed", `GitHub auth error: ${queryParams.error} - ${queryParams.detail || ''}`);
                 }
             } else {
-                console.log("[AUTH] Browser closed without a redirect (user cancelled or redirect failed).");
+                console.log("[AUTH] Browser closed without a redirect. Full result:", JSON.stringify(result));
+                Alert.alert("Login Incomplete", `Browser closed with type: ${result.type}`);
             }
         } catch (error: any) {
             console.error("[AUTH] Login Error:", error);

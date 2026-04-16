@@ -80,7 +80,58 @@ router.get(
   }
 );
 
-// --- MOBILE GITHUB AUTH ---
+// Token exchange endpoint — mobile sends the code, backend returns the access token
+router.post("/github/mobile/token", async (req, res) => {
+  const { code, redirect_uri } = req.body;
+
+  if (!code) return res.status(400).json({ error: 'No code provided' });
+
+  try {
+    const tokenRes = await axios.post(
+      'https://github.com/login/oauth/access_token',
+      {
+        client_id: process.env.GITHUB_CLIENT_ID_MOBILE,
+        client_secret: process.env.GITHUB_CLIENT_SECRET_MOBILE,
+        code,
+        redirect_uri,
+      },
+      { headers: { Accept: 'application/json' }, timeout: 10000 }
+    );
+
+    const accessToken = tokenRes.data.access_token;
+    if (!accessToken) {
+      console.error('[MOBILE TOKEN] GitHub error:', JSON.stringify(tokenRes.data));
+      return res.status(400).json({ error: 'Failed to obtain access token', detail: tokenRes.data });
+    }
+
+    const profileRes = await axios.get('https://api.github.com/user', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    const { id: githubId, login: username, avatar_url: avatarUrl } = profileRes.data;
+
+    const existing = await pool.query('SELECT * FROM users WHERE githubid = $1', [githubId]);
+    if (existing.rows.length > 0) {
+      await pool.query(
+        'UPDATE users SET username=$1, avatarurl=$2, accesstoken=$3 WHERE githubid=$4',
+        [username, avatarUrl, accessToken, githubId]
+      );
+    } else {
+      await pool.query(
+        'INSERT INTO users (githubid, username, avatarurl, accesstoken) VALUES ($1,$2,$3,$4)',
+        [githubId, username, avatarUrl, accessToken]
+      );
+    }
+
+    console.log(`[MOBILE TOKEN] Success for user: ${username}`);
+    res.json({ token: accessToken });
+  } catch (err: any) {
+    console.error('[MOBILE TOKEN] Error:', err.message);
+    res.status(500).json({ error: 'Server error during token exchange' });
+  }
+});
+
+
 // Uses a separate GitHub OAuth app with the mobile deep link as callback.
 
 router.get("/github/mobile", (req, res) => {

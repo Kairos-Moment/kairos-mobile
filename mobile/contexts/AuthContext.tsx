@@ -3,8 +3,140 @@ import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
-import { Platform, Alert } from 'react-native';
+import { Alert } from 'react-native';
 import apiClient from '../api/client';
+
+interface User {
+    id: string;
+    name: string;
+    email: string;
+    username?: string;
+    avatarurl?: string;
+    githubid?: string;
+}
+
+interface AuthContextType {
+    user: User | null;
+    isAuthenticated: boolean;
+    isLoading: boolean;
+    checkAuthStatus: () => Promise<void>;
+    login: () => void;
+    logout: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const TOKEN_KEY = 'kairos_auth_token';
+
+WebBrowser.maybeCompleteAuthSession();
+
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
+    const [user, setUser] = useState<User | null>(null);
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
+
+    const setupToken = useCallback(async (token: string | null) => {
+        if (token) {
+            await SecureStore.setItemAsync(TOKEN_KEY, token);
+            apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        } else {
+            await SecureStore.deleteItemAsync(TOKEN_KEY);
+            delete apiClient.defaults.headers.common['Authorization'];
+        }
+    }, []);
+
+    const checkAuthStatus = useCallback(async () => {
+        try {
+            const savedToken = await SecureStore.getItemAsync(TOKEN_KEY);
+            if (!savedToken) {
+                setIsAuthenticated(false);
+                setUser(null);
+                setIsLoading(false);
+                return;
+            }
+            apiClient.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
+            const response = await apiClient.get('/auth/login/success', { timeout: 5000 });
+            if (response.status === 200 && response.data.success) {
+                setUser(response.data.user);
+                setIsAuthenticated(true);
+            } else {
+                setUser(null);
+                setIsAuthenticated(false);
+            }
+        } catch {
+            setUser(null);
+            setIsAuthenticated(false);
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        checkAuthStatus();
+    }, [checkAuthStatus]);
+
+    const logout = async () => {
+        await setupToken(null);
+        setUser(null);
+        setIsAuthenticated(false);
+    };
+
+    const login = async () => {
+        try {
+            const redirectUri = AuthSession.makeRedirectUri({ path: 'login-success' });
+            console.log("[AUTH] Redirect URI:", redirectUri);
+
+            // Build the GitHub authorize URL directly using the mobile OAuth app
+            const authUrl = `https://github.com/login/oauth/authorize?client_id=${process.env.EXPO_PUBLIC_GITHUB_CLIENT_ID_MOBILE}&scope=read:user&redirect_uri=${encodeURIComponent(redirectUri)}`;
+
+            const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
+            console.log("[AUTH] Browser result type:", result.type);
+
+            if (result.type !== 'success') {
+                console.log("[AUTH] Browser closed without success:", result.type);
+                return;
+            }
+
+            const resultUrl = (result as any).url;
+            console.log("[AUTH] Result URL:", resultUrl);
+
+            const { queryParams } = Linking.parse(resultUrl);
+            const code = queryParams?.code as string;
+
+            if (!code) {
+                Alert.alert("Login Failed", "No code returned from GitHub.");
+                return;
+            }
+
+            // Exchange code for token via our backend
+            console.log("[AUTH] Exchanging code for token...");
+            const tokenRes = await apiClient.post('/auth/github/mobile/token', { code, redirect_uri: redirectUri });
+            const token = tokenRes.data.token;
+
+            if (!token) {
+                Alert.alert("Login Failed", "Could not obtain access token.");
+                return;
+            }
+
+            await setupToken(token);
+            await checkAuthStatus();
+        } catch (error: any) {
+            console.error("[AUTH] Login Error:", error?.message || error);
+            Alert.alert("Authentication Error", "Could not complete GitHub login.");
+        }
+    };
+
+    return (
+        <AuthContext.Provider value={{ user, isAuthenticated, isLoading, checkAuthStatus, login, logout }}>
+            {children}
+        </AuthContext.Provider>
+    );
+};
+
+export const useAuth = () => {
+    const context = useContext(AuthContext);
+    if (!context) throw new Error('useAuth must be used within an AuthProvider');
+    return context;
+};
 
 interface User {
     id: string;

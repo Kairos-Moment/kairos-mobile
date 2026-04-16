@@ -125,7 +125,7 @@ router.post("/github/mobile/token", async (req, res) => {
 
     console.log(`[MOBILE TOKEN] Success for user: ${username}`);
     res.json({ token: accessToken });
-  } catch (err: any) {
+  } catch (err) {
     console.error('[MOBILE TOKEN] Error:', err.message);
     res.status(500).json({ error: 'Server error during token exchange' });
   }

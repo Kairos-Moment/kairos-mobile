@@ -157,18 +157,9 @@ router.get("/github/mobile/callback", async (req, res) => {
       user = created.rows[0];
     }
 
-    // Create a Passport session so /api/auth/login/success works too
-    req.logIn(user, (err) => {
-      if (err) {
-        console.error('[MOBILE AUTH] logIn error:', err);
-        return res.redirect(`${mobileRedirectUri}?error=login_failed`);
-      }
-      req.session.save(() => {
-        console.log(`[MOBILE AUTH] Success for user: ${username}`);
-        // Redirect back to the Expo deep link with the token
-        res.redirect(`${mobileRedirectUri}?token=${accessToken}&success=true`);
-      });
-    });
+    // Mobile uses token-based auth, no session needed — redirect straight back to the app
+    console.log(`[MOBILE AUTH] Success for user: ${username}`);
+    res.redirect(`${mobileRedirectUri}?token=${accessToken}&success=true`);
 
   } catch (err) {
     console.error('[MOBILE AUTH] Error:', err.message);

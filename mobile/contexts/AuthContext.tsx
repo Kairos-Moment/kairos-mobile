@@ -82,7 +82,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const login = async () => {
         try {
-            const redirectUri = AuthSession.makeRedirectUri({ path: 'login-success' });
+            // useProxy gives a stable public redirect URI that works on any network/device
+            const redirectUri = AuthSession.makeRedirectUri({ useProxy: true });
             console.log("[AUTH] Redirect URI:", redirectUri);
 
             // Go through backend — GitHub doesn't accept exp:// redirect URIs directly

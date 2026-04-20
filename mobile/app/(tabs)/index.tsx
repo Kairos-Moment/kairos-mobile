@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import { StyleSheet, ScrollView, RefreshControl, TouchableOpacity, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
-import { FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import { Text, View } from '@/components/Themed';
 import OracleInsight from '@/components/dashboard/OracleInsight';
@@ -55,7 +56,17 @@ export default function DashboardScreen() {
 
   const handleToggleTask = async (task: Task) => {
     try {
-      const updated = await updateTask(task.id, { is_completed: !task.is_completed });
+      const newStatus = task.status === 'completed' ? 'pending' : 'completed';
+      const updated = await updateTask(task.id, {
+        title: task.title,
+        description: task.description || '',
+        is_urgent: task.is_urgent,
+        is_important: task.is_important,
+        due_date: task.due_date || null,
+        status: newStatus,
+        goal_id: task.goal_id || null,
+        subtasks: task.subtasks || [],
+      });
       setTasks(prev => prev.map(t => t.id === task.id ? updated : t));
     } catch (error) {
       console.error("Failed to toggle task:", error);
@@ -77,36 +88,44 @@ export default function DashboardScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-      >
-        <OracleInsight insightData={insightData} isLoading={isLoading} />
+      <StatusBar barStyle="light-content" />
+      <LinearGradient colors={['#0a0a14', '#1a1a2e']} style={styles.gradient}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d4af37" />
+          }
+        >
+          <View style={styles.header}>
+            <Text style={styles.headerGreek}>ΑΓΟΡΑ</Text>
+            <Text style={styles.headerTitle}>The Agora</Text>
+            <View style={styles.headerDivider} />
+          </View>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Today's Timeline</Text>
-        </View>
+          <OracleInsight insightData={insightData} isLoading={isLoading} />
 
-        <Timeline
-          tasks={tasks}
-          isLoading={isLoading}
-          onEdit={handleEditTask}
-          onDelete={handleDeleteTask}
-          onToggle={handleToggleTask}
-          onStartFocus={handleStartFocus}
-        />
-      </ScrollView>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionSymbol}>◆</Text>
+            <Text style={styles.sectionTitle}>Today's Labors</Text>
+          </View>
+
+          <Timeline
+            tasks={tasks}
+            isLoading={isLoading}
+            onEdit={handleEditTask}
+            onDelete={handleDeleteTask}
+            onToggle={handleToggleTask}
+            onStartFocus={handleStartFocus}
+          />
+        </ScrollView>
+      </LinearGradient>
 
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => {
-          setEditingTask(null);
-          setIsModalOpen(true);
-        }}
+        onPress={() => { setEditingTask(null); setIsModalOpen(true); }}
+        activeOpacity={0.85}
       >
-        <FontAwesome name="plus" size={24} color="#fff" />
+        <Ionicons name="add" size={28} color="#1a1a2e" />
       </TouchableOpacity>
 
       <TaskModal
@@ -120,35 +139,68 @@ export default function DashboardScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  gradient: { flex: 1 },
   scrollContent: {
     padding: 16,
     paddingBottom: 100,
+    paddingTop: 20,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  headerGreek: {
+    fontSize: 12,
+    color: 'rgba(212,175,55,0.5)',
+    letterSpacing: 6,
+    marginBottom: 4,
+  },
+  headerTitle: {
+    fontSize: 26,
+    fontWeight: 'bold',
+    color: '#d4af37',
+    letterSpacing: 3,
+    textTransform: 'uppercase',
+  },
+  headerDivider: {
+    width: 60,
+    height: 1,
+    backgroundColor: 'rgba(212,175,55,0.4)',
+    marginTop: 10,
   },
   sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginTop: 24,
     marginBottom: 12,
   },
+  sectionSymbol: {
+    color: '#d4af37',
+    fontSize: 10,
+  },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 13,
     fontWeight: 'bold',
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 2,
   },
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 20,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#2196f3',
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#d4af37',
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
+    elevation: 6,
+    shadowColor: '#d4af37',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
   },
 });

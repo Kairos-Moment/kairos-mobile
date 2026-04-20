@@ -5,10 +5,22 @@ import { useRouter, useSegments, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
+
+// Show notifications when app is in foreground
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -31,13 +43,22 @@ function RootLayoutNav() {
     const inAuthGroup = segments[0] === 'login';
 
     if (!isAuthenticated && !inAuthGroup) {
-      // Redirect to login if user is not authenticated and not in login screen
       router.replace('/login');
     } else if (isAuthenticated && inAuthGroup) {
-      // Redirect to tabs if user is authenticated and in login screen
       router.replace('/(tabs)');
     }
   }, [isAuthenticated, segments, isLoading]);
+
+  // Navigate to focus tab when user taps the session notification
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(response => {
+      const screen = response.notification.request.content.data?.screen;
+      if (screen && isAuthenticated) {
+        router.push(screen as any);
+      }
+    });
+    return () => sub.remove();
+  }, [isAuthenticated]);
 
   if (isLoading) {
     return (

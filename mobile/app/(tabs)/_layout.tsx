@@ -1,64 +1,78 @@
 import React from 'react';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { Link, Tabs } from 'expo-router';
-import { Pressable } from 'react-native';
-
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
+import { Tabs } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 
-// You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
-function TabBarIcon(props: {
-  name: React.ComponentProps<typeof FontAwesome>['name'];
-  color: string;
-}) {
-  return <FontAwesome size={28} style={{ marginBottom: -3 }} {...props} />;
+function TabIcon({ name, color }: { name: React.ComponentProps<typeof Ionicons>['name']; color: string }) {
+  return <Ionicons name={name} size={22} color={color} />;
 }
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
         headerShown: useClientOnlyValue(false, true),
-      }}>
+        tabBarActiveTintColor: '#d4af37',
+        tabBarInactiveTintColor: '#555',
+        tabBarStyle: {
+          backgroundColor: '#0f0f1a',
+          borderTopColor: 'rgba(212,175,55,0.2)',
+          borderTopWidth: 1,
+          height: 65,
+          paddingBottom: 10,
+          paddingTop: 6,
+        },
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: '600',
+          letterSpacing: 0.5,
+        },
+        headerStyle: {
+          backgroundColor: '#0f0f1a',
+          borderBottomColor: 'rgba(212,175,55,0.2)',
+          borderBottomWidth: 1,
+        },
+        headerTintColor: '#d4af37',
+        headerTitleStyle: {
+          fontWeight: 'bold',
+          letterSpacing: 2,
+          textTransform: 'uppercase',
+        },
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color }) => <TabBarIcon name="dashboard" color={color} />,
+          title: 'Agora',
+          tabBarIcon: ({ color }) => <TabIcon name="home-outline" color={color} />,
         }}
       />
       <Tabs.Screen
         name="habits"
         options={{
-          title: 'Habits',
-          tabBarIcon: ({ color }) => <TabBarIcon name="check-square-o" color={color} />,
+          title: 'Virtues',
+          tabBarIcon: ({ color }) => <TabIcon name="shield-checkmark-outline" color={color} />,
         }}
       />
       <Tabs.Screen
         name="focus"
         options={{
-          title: 'Focus',
-          tabBarIcon: ({ color }) => <TabBarIcon name="clock-o" color={color} />,
+          title: 'Temple',
+          tabBarIcon: ({ color }) => <TabIcon name="flame-outline" color={color} />,
         }}
       />
       <Tabs.Screen
         name="report"
         options={{
-          title: 'Report',
-          tabBarIcon: ({ color }) => <TabBarIcon name="bar-chart" color={color} />,
+          title: 'Oracle',
+          tabBarIcon: ({ color }) => <TabIcon name="bar-chart-outline" color={color} />,
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Settings',
-          tabBarIcon: ({ color }) => <TabBarIcon name="cog" color={color} />,
+          title: 'Scrolls',
+          tabBarIcon: ({ color }) => <TabIcon name="settings-outline" color={color} />,
         }}
       />
     </Tabs>

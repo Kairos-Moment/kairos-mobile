@@ -14,7 +14,10 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": ["audio"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -42,7 +45,15 @@
       "@react-native-community/datetimepicker",
       "expo-web-browser",
       "expo-secure-store",
-      "expo-audio"
+      "expo-audio",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#d4af37",
+          "androidMode": "default"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

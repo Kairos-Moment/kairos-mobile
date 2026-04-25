@@ -132,17 +132,48 @@ router.post("/github/mobile/token", async (req, res) => {
 });
 
 
-// Uses a separate GitHub OAuth app with the mobile deep link as callback.
+// Temporary debug endpoint — remove after fixing auth
+router.get("/github/mobile/debug", async (req, res) => {
+  res.json({
+    client_id: process.env.GITHUB_CLIENT_ID_MOBILE ? '✅ set' : '❌ missing',
+    client_secret: process.env.GITHUB_CLIENT_SECRET_MOBILE ? '✅ set' : '❌ missing',
+    callback_url: process.env.GITHUB_CALLBACK_URL_MOBILE || '❌ missing',
+    mobile_redirect: process.env.MOBILE_REDIRECT_URI || '❌ missing',
+  });
+});
+
+// Debug token exchange — pass ?code=TEST to see raw GitHub response
+router.get("/github/mobile/debug-token", async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.json({ hint: 'Pass ?code=any_value to test the exchange' });
+
+  try {
+    const tokenRes = await axios.post(
+      'https://github.com/login/oauth/access_token',
+      {
+        client_id: process.env.GITHUB_CLIENT_ID_MOBILE,
+        client_secret: process.env.GITHUB_CLIENT_SECRET_MOBILE,
+        code,
+      },
+      { headers: { Accept: 'application/json' }, timeout: 10000 }
+    );
+    res.json({ github_response: tokenRes.data });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+
 
 router.get("/github/mobile", (req, res) => {
   const { redirect_uri } = req.query;
   const mobileRedirectUri = redirect_uri || process.env.MOBILE_REDIRECT_URI;
 
-  // Encode the mobile redirect URI in the state param so it survives the OAuth round-trip
   const state = Buffer.from(JSON.stringify({ mobileRedirectUri })).toString('base64');
 
   const params = new URLSearchParams({
     client_id: process.env.GITHUB_CLIENT_ID_MOBILE,
+    redirect_uri: mobileRedirectUri,
     scope: 'read:user',
     state,
   });

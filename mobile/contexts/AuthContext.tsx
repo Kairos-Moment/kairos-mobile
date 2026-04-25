@@ -1,7 +1,6 @@
 import React, { createContext, useState, useContext, useEffect, useCallback, ReactNode } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
-import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
 import { Alert } from 'react-native';
 import apiClient from '../api/client';
@@ -34,88 +33,59 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
-    const setupToken = useCallback(async (token: string | null) => {
-        if (token) {
-            await SecureStore.setItemAsync(TOKEN_KEY, token);
-            apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-        } else {
-            await SecureStore.deleteItemAsync(TOKEN_KEY);
-            delete apiClient.defaults.headers.common['Authorization'];
-        }
-    }, []);
-
     const checkAuthStatus = useCallback(async () => {
         try {
-            const savedToken = await SecureStore.getItemAsync(TOKEN_KEY);
-            if (!savedToken) {
+            const token = await SecureStore.getItemAsync(TOKEN_KEY);
+            if (!token) {
                 setIsAuthenticated(false);
                 setUser(null);
                 setIsLoading(false);
                 return;
             }
-            apiClient.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
-            const response = await apiClient.get('/auth/login/success', { timeout: 5000 });
-            if (response.status === 200 && response.data.success) {
-                setUser(response.data.user);
+            apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+            const res = await apiClient.get('/auth/login/success', { timeout: 5000 });
+            if (res.data.success) {
+                setUser(res.data.user);
                 setIsAuthenticated(true);
             } else {
-                setUser(null);
+                await SecureStore.deleteItemAsync(TOKEN_KEY);
                 setIsAuthenticated(false);
             }
         } catch {
-            setUser(null);
-            setIsAuthenticated(false);
+            // On network error keep user logged in if token exists
+            const token = await SecureStore.getItemAsync(TOKEN_KEY).catch(() => null);
+            setIsAuthenticated(!!token);
         } finally {
             setIsLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        checkAuthStatus();
+        const safety = setTimeout(() => setIsLoading(false), 6000);
+        checkAuthStatus().finally(() => clearTimeout(safety));
     }, [checkAuthStatus]);
-
-    const logout = async () => {
-        await setupToken(null);
-        setUser(null);
-        setIsAuthenticated(false);
-    };
 
     const login = async () => {
         try {
-            // useProxy gives a stable public redirect URI that works on any network/device
-            const redirectUri = AuthSession.makeRedirectUri({ useProxy: true });
-            console.log("[AUTH] Redirect URI:", redirectUri);
-
-            // Go through backend — GitHub doesn't accept exp:// redirect URIs directly
+            const redirectUri = AuthSession.makeRedirectUri({
+                scheme: 'mobile',
+                path: 'login-success',
+            });
+            console.log('[AUTH] Redirect URI:', redirectUri);
             const authUrl = `${apiClient.defaults.baseURL}/auth/github/mobile?redirect_uri=${encodeURIComponent(redirectUri)}`;
-
-            const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
-            console.log("[AUTH] Browser result type:", result.type);
-
-            if (result.type !== 'success') {
-                console.log("[AUTH] Browser closed without success:", result.type);
-                return;
-            }
-
-            const resultUrl = (result as any).url;
-            console.log("[AUTH] Result URL:", resultUrl);
-
-            const { queryParams } = Linking.parse(resultUrl);
-            const token = queryParams?.token as string;
-
-            if (!token) {
-                const errorDetail = queryParams?.detail || queryParams?.error || 'unknown';
-                Alert.alert("Login Failed", `Could not obtain token. Detail: ${errorDetail}`);
-                return;
-            }
-
-            console.log("[AUTH] Token received, setting up session...");
-            await setupToken(token);
-            await checkAuthStatus();
-        } catch (error: any) {
-            console.error("[AUTH] Login Error:", error?.message || error);
-            Alert.alert("Authentication Error", "Could not complete GitHub login.");
+            await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
+            // Token handling is done in app/login-success.tsx
+        } catch (err: any) {
+            console.error('[AUTH] Login error:', err?.message);
+            Alert.alert('Authentication Error', 'Could not complete GitHub login.');
         }
+    };
+
+    const logout = async () => {
+        await SecureStore.deleteItemAsync(TOKEN_KEY);
+        delete apiClient.defaults.headers.common['Authorization'];
+        setUser(null);
+        setIsAuthenticated(false);
     };
 
     return (

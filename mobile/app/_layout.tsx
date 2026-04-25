@@ -11,7 +11,8 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 
-// Show notifications when app is in foreground
+SplashScreen.preventAutoHideAsync();
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -22,14 +23,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
-
-export const shadowOptions = {
-  headerShown: false,
-};
+export { ErrorBoundary } from 'expo-router';
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
@@ -39,23 +33,25 @@ function RootLayoutNav() {
 
   useEffect(() => {
     if (isLoading) return;
+    SplashScreen.hideAsync();
 
-    const inAuthGroup = segments[0] === 'login';
+    const inTabsGroup = segments[0] === '(tabs)';
+    const inLoginSuccess = segments[0] === 'login-success' as any;
 
-    if (!isAuthenticated && !inAuthGroup) {
-      router.replace('/login');
-    } else if (isAuthenticated && inAuthGroup) {
+    // Don't interfere while login-success is processing the token
+    if (inLoginSuccess) return;
+
+    if (isAuthenticated && !inTabsGroup) {
       router.replace('/(tabs)');
+    } else if (!isAuthenticated && inTabsGroup) {
+      router.replace('/login');
     }
-  }, [isAuthenticated, segments, isLoading]);
+  }, [isAuthenticated, isLoading, segments]);
 
-  // Navigate to focus tab when user taps the session notification
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener(response => {
       const screen = response.notification.request.content.data?.screen;
-      if (screen && isAuthenticated) {
-        router.push(screen as any);
-      }
+      if (screen && isAuthenticated) router.push(screen as any);
     });
     return () => sub.remove();
   }, [isAuthenticated]);
@@ -72,6 +68,7 @@ function RootLayoutNav() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="login-success" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>
@@ -85,20 +82,11 @@ export default function RootLayout() {
     ...FontAwesome.font,
   });
 
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
     if (error) throw error;
   }, [error]);
 
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
-
-  if (!loaded) {
-    return null;
-  }
+  if (!loaded) return null;
 
   return (
     <AuthProvider>

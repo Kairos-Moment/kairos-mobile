@@ -21,7 +21,6 @@ export async function setupNotifications() {
         });
     }
 
-    // Action categories — only work in standalone builds, not Expo Go
     await Notifications.setNotificationCategoryAsync('focus_active', [
         { identifier: ACTION_PAUSE, buttonTitle: '⏸ Pause', options: { isDestructive: false } },
         { identifier: ACTION_STOP, buttonTitle: '⏹ Stop', options: { isDestructive: true } },
@@ -44,11 +43,14 @@ export async function showSessionNotification(
     const seconds = timeLeft % 60;
     const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
 
+    // Dismiss previous before showing updated one to avoid stacking
+    await Notifications.dismissNotificationAsync(NOTIFICATION_ID).catch(() => {});
+
     await Notifications.scheduleNotificationAsync({
         identifier: NOTIFICATION_ID,
         content: {
-            title: isActive ? '⚡ In Focus — Kairos' : '⏸ Paused — Kairos',
-            body: `${taskTitle}  ·  ${timeStr} remaining\nTap to return to your session.`,
+            title: isActive ? `⚡ ${timeStr} remaining` : `⏸ Paused — ${timeStr}`,
+            body: `${taskTitle} · Tap to return`,
             categoryIdentifier: isActive ? 'focus_active' : 'focus_paused',
             autoDismiss: false,
             sticky: true,
@@ -60,6 +62,6 @@ export async function showSessionNotification(
 }
 
 export async function dismissSessionNotification() {
-    await Notifications.dismissNotificationAsync(NOTIFICATION_ID);
-    await Notifications.cancelScheduledNotificationAsync(NOTIFICATION_ID);
+    await Notifications.dismissNotificationAsync(NOTIFICATION_ID).catch(() => {});
+    await Notifications.cancelScheduledNotificationAsync(NOTIFICATION_ID).catch(() => {});
 }

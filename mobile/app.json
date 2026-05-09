@@ -67,7 +67,8 @@
           "color": "#d4af37",
           "androidMode": "default"
         }
-      ]
+      ],
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true

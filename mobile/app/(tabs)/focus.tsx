@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     StyleSheet, ScrollView, TouchableOpacity,
-    Alert, TextInput, Linking, Switch, StatusBar,
+    Alert, TextInput, Switch, StatusBar, AppState,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
@@ -59,9 +59,6 @@ export default function FocusScreen() {
     // Audio
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
     const player = useAudioPlayer(audioUrl);
-
-    // Normal mode — YouTube
-    const [ytInput, setYtInput] = useState('');
 
     // Encapsulation Mode — offline local audio
     const [encapsulationMode, setEncapsulationMode] = useState(false);
@@ -138,20 +135,30 @@ export default function FocusScreen() {
     const handleImportAudio = async () => {
         try {
             const result = await DocumentPicker.getDocumentAsync({
-                type: 'audio/*',
+                // No type restriction — lets Android show all sources including Google Drive
                 copyToCacheDirectory: true,
             });
 
             if (result.canceled) return;
 
             const file = result.assets[0];
-            const destUri = OFFLINE_DIR + file.name;
+
+            // Validate it's an audio file by extension
+            const audioExtensions = ['.mp3', '.wav', '.aac', '.flac', '.ogg', '.m4a', '.opus'];
+            const isAudio = audioExtensions.some(ext => file.name.toLowerCase().endsWith(ext))
+                || file.mimeType?.startsWith('audio/');
+
+            if (!isAudio) {
+                Alert.alert('Invalid File', 'Please select an audio file (mp3, wav, aac, m4a, etc.)');
+                return;
+            }
 
             const dirInfo = await FileSystem.getInfoAsync(OFFLINE_DIR);
             if (!dirInfo.exists) {
                 await FileSystem.makeDirectoryAsync(OFFLINE_DIR, { intermediates: true });
             }
 
+            const destUri = OFFLINE_DIR + file.name;
             await FileSystem.copyAsync({ from: file.uri, to: destUri });
             const newTrack = { name: file.name, uri: destUri };
             setLocalTracks(prev => [...prev, newTrack]);
@@ -187,16 +194,23 @@ export default function FocusScreen() {
         setAudioUrl(track.uri);
     };
 
-    const handleOpenYoutube = () => {
-        const id = extractYoutubeId(ytInput);
-        if (!id) { Alert.alert('Invalid Link', 'Please enter a valid YouTube URL.'); return; }
-        Linking.openURL(`https://www.youtube.com/watch?v=${id}`);
-    };
-
     const extractYoutubeId = (url: string) => {
         const match = url.match(/(?:youtu\.be\/|v=|\/embed\/)([^#&?]{11})/);
         return match ? match[1] : null;
     };
+
+    // Sync timer state when app returns to foreground
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', state => {
+            if (state === 'active' && isActiveRef.current && sessionStartRef.current) {
+                const elapsed = Math.floor((Date.now() - new Date(sessionStartRef.current).getTime()) / 1000);
+                const remaining = Math.max(0, totalSecondsRef.current - elapsed);
+                setTimeLeft(remaining);
+                if (remaining === 0) handleSessionComplete();
+            }
+        });
+        return () => sub.remove();
+    }, []);
 
     useEffect(() => {
         let interval: ReturnType<typeof setInterval> | null = null;
@@ -208,12 +222,36 @@ export default function FocusScreen() {
         return () => { if (interval) clearInterval(interval); };
     }, [isActive, timeLeft]);
 
-    // Keep notification in sync with session state
+    // Keep notification in sync — use ref so background updates get real value
+    const timeLeftRef = useRef(timeLeft);
+    const isActiveRef = useRef(isActive);
+    const sessionStartRef = useRef(sessionStartTime);
+    const totalSecondsRef = useRef(customMinutes * 60);
+    useEffect(() => { timeLeftRef.current = timeLeft; }, [timeLeft]);
+    useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
+    useEffect(() => { sessionStartRef.current = sessionStartTime; }, [sessionStartTime]);
+    useEffect(() => { totalSecondsRef.current = customMinutes * 60; }, [customMinutes]);
+
+    // Update notification every 10s in background (Android throttles frequent updates)
     useEffect(() => {
-        if (isActive || (sessionStartTime && timeLeft > 0)) {
+        const interval = setInterval(() => {
+            if (!isActiveRef.current || !sessionStartRef.current) return;
+            const elapsed = Math.floor((Date.now() - new Date(sessionStartRef.current).getTime()) / 1000);
+            const remaining = Math.max(0, totalSecondsRef.current - elapsed);
+            showSessionNotification(remaining, true, activeTaskTitle);
+        }, 10000);
+        return () => clearInterval(interval);
+    }, [activeTaskTitle]);
+
+    // Update notification immediately on pause/resume
+    useEffect(() => {
+        if (sessionStartTime) {
             showSessionNotification(timeLeft, isActive, activeTaskTitle);
         }
-    }, [timeLeft, isActive]);
+        if (!isActive && !sessionStartTime) {
+            dismissSessionNotification();
+        }
+    }, [isActive]);
 
     const handleSessionComplete = async () => {
         setIsActive(false);
@@ -361,14 +399,12 @@ export default function FocusScreen() {
                         </View>
 
                         <Text style={styles.encapDesc}>
-                            {encapsulationMode
-                                ? 'Offline mode — play audio imported from your device.'
-                                : 'Online mode — open YouTube tracks in the YouTube app.'}
+                            Import audio files from your device for true offline background playback during focus sessions.
                         </Text>
 
                         <View style={styles.modeDivider} />
 
-                        {encapsulationMode ? (
+                        {encapsulationMode && (
                             /* ── OFFLINE MODE ── */
                             <View>
                                 <TouchableOpacity onPress={handleImportAudio} style={styles.importBtn}>
@@ -403,26 +439,6 @@ export default function FocusScreen() {
                                         </View>
                                     ))
                                 )}
-                            </View>
-                        ) : (
-                            /* ── ONLINE MODE ── */
-                            <View>
-                                <Text style={styles.subLabel}>YouTube Track</Text>
-                                <View style={styles.ytRow}>
-                                    <Ionicons name="logo-youtube" size={18} color="#ff0000" />
-                                    <TextInput
-                                        style={styles.ytInput}
-                                        placeholder="Paste YouTube link..."
-                                        placeholderTextColor="#444"
-                                        value={ytInput}
-                                        onChangeText={setYtInput}
-                                        autoCapitalize="none"
-                                    />
-                                </View>
-                                <TouchableOpacity onPress={handleOpenYoutube} style={styles.ytOpenBtn}>
-                                    <Ionicons name="open-outline" size={16} color="#d4af37" />
-                                    <Text style={styles.ytOpenText}>Open in YouTube</Text>
-                                </TouchableOpacity>
                             </View>
                         )}
                     </View>
@@ -517,15 +533,4 @@ const styles = StyleSheet.create({
     trackNameActive: { color: '#d4af37', fontWeight: 'bold' },
 
     subLabel: { color: '#888', fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 },
-    ytRow: {
-        flexDirection: 'row', alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, paddingHorizontal: 10, gap: 8, marginBottom: 10,
-    },
-    ytInput: { flex: 1, color: '#fff', paddingVertical: 10, fontSize: 13 },
-    ytOpenBtn: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-        backgroundColor: 'rgba(212,175,55,0.08)', borderWidth: 1,
-        borderColor: 'rgba(212,175,55,0.25)', borderRadius: 10, paddingVertical: 10,
-    },
-    ytOpenText: { color: '#d4af37', fontSize: 13, fontWeight: '600' },
 });

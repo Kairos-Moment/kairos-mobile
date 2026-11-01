@@ -41,13 +41,14 @@ export default function LoginSuccessScreen() {
                 await SecureStore.setItemAsync('kairos_auth_token', finalToken);
                 apiClient.defaults.headers.common['Authorization'] = `Bearer ${finalToken}`;
                 await checkAuthStatus();
+                router.replace('/(tabs)');
             } catch (e: any) {
                 Alert.alert('Login Failed', e?.response?.data?.error || e.message);
                 router.replace('/login');
             }
         };
         handle();
-    }, []);
+    }, [checkAuthStatus, params, router]);
 
     return (
         <View style={{ flex: 1, backgroundColor: '#1a1a2e', justifyContent: 'center', alignItems: 'center' }}>

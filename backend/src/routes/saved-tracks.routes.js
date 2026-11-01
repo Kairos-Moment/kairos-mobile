@@ -4,6 +4,9 @@ const router = express.Router();
 const path = require('path');
 const multer = require('multer');
 const savedTracksController = require('../controllers/saved-tracks.controller');
+const { ensureAuthenticated } = require('../middleware/auth.middleware');
+
+router.use(ensureAuthenticated);
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {

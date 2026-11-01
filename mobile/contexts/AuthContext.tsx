@@ -42,18 +42,34 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 setIsLoading(false);
                 return;
             }
+
             apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-            const res = await apiClient.get('/auth/login/success', { timeout: 5000 });
-            if (res.data.success) {
-                setUser(res.data.user);
-                setIsAuthenticated(true);
-            } else {
-                await SecureStore.deleteItemAsync(TOKEN_KEY);
-                setIsAuthenticated(false);
+
+            try {
+                const res = await apiClient.get('/auth/login/success', { timeout: 5000 });
+                if (res.data?.success) {
+                    setUser(res.data.user ?? null);
+                    setIsAuthenticated(true);
+                    return;
+                }
+            } catch {
+                // If the backend validation call is temporarily unavailable, keep the locally stored
+                // token as valid to prevent the user from being bounced back to the login screen.
             }
+
+            const storedToken = await SecureStore.getItemAsync(TOKEN_KEY).catch(() => null);
+            if (storedToken) {
+                setIsAuthenticated(true);
+                return;
+            }
+
+            await SecureStore.deleteItemAsync(TOKEN_KEY);
+            delete apiClient.defaults.headers.common['Authorization'];
+            setUser(null);
+            setIsAuthenticated(false);
         } catch {
-            // On network error keep user logged in if token exists
             const token = await SecureStore.getItemAsync(TOKEN_KEY).catch(() => null);
+            setUser(null);
             setIsAuthenticated(!!token);
         } finally {
             setIsLoading(false);
@@ -70,6 +86,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             const redirectUri = AuthSession.makeRedirectUri({
                 scheme: 'mobile',
                 path: 'login-success',
+                // path: 'login-success',
+                // preferLocalhost: true,
             });
             console.log('[AUTH] Redirect URI:', redirectUri);
             const authUrl = `${apiClient.defaults.baseURL}/auth/github/mobile?redirect_uri=${encodeURIComponent(redirectUri)}`;

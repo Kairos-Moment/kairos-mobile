@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const BASE_URL = 'https://kairos-time-management.onrender.com/api';
+export const API_ORIGIN = 'https://kairos-time-management.onrender.com';
+const BASE_URL = `${API_ORIGIN}/api`;
 
 const apiClient = axios.create({
     baseURL: BASE_URL,

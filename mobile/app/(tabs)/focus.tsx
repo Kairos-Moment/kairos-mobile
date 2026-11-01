@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     StyleSheet, ScrollView, TouchableOpacity,
-    Alert, TextInput, Switch, StatusBar, AppState,
+    Alert, TextInput, Switch, StatusBar, AppState, ActivityIndicator,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
-import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as DocumentPicker from 'expo-document-picker';
@@ -13,7 +12,19 @@ import * as Notifications from 'expo-notifications';
 
 import { Text, View } from '@/components/Themed';
 import { getTasks, Task } from '@/api/tasks';
-import { createFocusSession } from '@/api/focus';
+import { createFocusSession, getSavedTracks, deleteTrack, uploadTrack, SavedTrack } from '@/api/focus';
+import { API_ORIGIN } from '@/api/client';
+import { useMusicPlayer } from '@/contexts/MusicPlayerContext';
+import { getNavidromeCredentials } from '@/utils/navidromeCredentials';
+import {
+    searchSongs,
+    getPlaylists,
+    getPlaylistSongs,
+    getStreamUrl,
+    NavidromeSong,
+    NavidromePlaylist,
+} from '@/services/navidrome';
+import LibraryModal from '@/components/focus/LibraryModal';
 import {
     setupNotifications, showSessionNotification, dismissSessionNotification,
     ACTION_PAUSE, ACTION_RESUME, ACTION_STOP,
@@ -40,6 +51,13 @@ interface LocalTrack {
 
 export default function FocusScreen() {
     const { taskId } = useLocalSearchParams();
+    const router = useRouter();
+    const {
+        playTrack,
+        stop,
+        currentTrack,
+        setFocusSessionActive,
+    } = useMusicPlayer();
 
     const [tasks, setTasks] = useState<Task[]>([]);
     const [selectedTaskId, setSelectedTaskId] = useState<string>('');
@@ -50,38 +68,32 @@ export default function FocusScreen() {
     const [quote] = useState(() => GREEK_QUOTES[Math.floor(Math.random() * GREEK_QUOTES.length)]);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Notification ref for response listener
     const notifListenerRef = useRef<any>(null);
-
-    // Selected task title for notification display
     const activeTaskTitle = tasks.find(t => t.id.toString() === selectedTaskId)?.title || 'Focus Session';
 
-    // Audio
-    const [audioUrl, setAudioUrl] = useState<string | null>(null);
-    const player = useAudioPlayer(audioUrl);
-
-    // Encapsulation Mode — offline local audio
     const [encapsulationMode, setEncapsulationMode] = useState(false);
     const [localTracks, setLocalTracks] = useState<LocalTrack[]>([]);
-    const [activeTrack, setActiveTrack] = useState<LocalTrack | null>(null);
+    const [activeLocalTrack, setActiveLocalTrack] = useState<LocalTrack | null>(null);
+
+    const [navidromeConfigured, setNavidromeConfigured] = useState(false);
+    const [navSearch, setNavSearch] = useState('');
+    const [navResults, setNavResults] = useState<NavidromeSong[]>([]);
+    const [navSearching, setNavSearching] = useState(false);
+    const [playlists, setPlaylists] = useState<NavidromePlaylist[]>([]);
+    const [showPlaylists, setShowPlaylists] = useState(false);
+    const [playlistLoading, setPlaylistLoading] = useState(false);
+
+    const [savedTracks, setSavedTracks] = useState<SavedTrack[]>([]);
+    const [libraryOpen, setLibraryOpen] = useState(false);
 
     useEffect(() => {
-        // Enable background audio playback and lock screen controls
-        setAudioModeAsync({
-            playsInSilentMode: true,
-            shouldPlayInBackground: true,
-        });
-        // Request notification permissions
         setupNotifications();
-
-        // Listen for notification action button taps
         notifListenerRef.current = Notifications.addNotificationResponseReceivedListener(response => {
             const action = response.actionIdentifier;
             if (action === ACTION_PAUSE) setIsActive(false);
             else if (action === ACTION_RESUME) setIsActive(true);
             else if (action === ACTION_STOP) handleSessionComplete();
         });
-
         return () => {
             notifListenerRef.current?.remove();
             dismissSessionNotification();
@@ -89,12 +101,15 @@ export default function FocusScreen() {
     }, []);
 
     useEffect(() => {
-        if (player) {
-            player.loop = true;
-            if (isActive && audioUrl) player.play();
-            else player.pause();
-        }
-    }, [isActive, audioUrl, player]);
+        setFocusSessionActive(isActive);
+    }, [isActive, setFocusSessionActive]);
+
+    useEffect(() => {
+        getNavidromeCredentials().then(c => setNavidromeConfigured(!!c));
+        getSavedTracks()
+            .then(tracks => setSavedTracks(tracks.filter(t => t.file_path)))
+            .catch(() => {});
+    }, []);
 
     useEffect(() => {
         getTasks()
@@ -106,13 +121,11 @@ export default function FocusScreen() {
             .catch(err => console.error("Task fetch failed", err));
     }, [taskId]);
 
-    // Load saved local tracks when Encapsulation Mode turns on
     useEffect(() => {
         if (encapsulationMode) loadLocalTracks();
         else {
-            // Switching off — clear local track, revert to no audio
-            setActiveTrack(null);
-            setAudioUrl(null);
+            setActiveLocalTrack(null);
+            if (currentTrack?.source === 'local') stop();
         }
     }, [encapsulationMode]);
 
@@ -125,46 +138,157 @@ export default function FocusScreen() {
                 return;
             }
             const files = await FileSystem.readDirectoryAsync(OFFLINE_DIR);
-            const tracks = files.map(f => ({ name: f, uri: OFFLINE_DIR + f }));
-            setLocalTracks(tracks);
+            setLocalTracks(files.map(f => ({ name: f, uri: OFFLINE_DIR + f })));
         } catch (err) {
             console.error("Failed to load local tracks", err);
         }
     };
 
-    const handleImportAudio = async () => {
+    const handleSilence = () => stop();
+
+    const handleAmbient = (name: string, url: string) => {
+        playTrack({ url, title: name, source: 'ambient', loop: true });
+    };
+
+    const handleSelectLocalTrack = (track: LocalTrack) => {
+        setActiveLocalTrack(track);
+        playTrack({ url: track.uri, title: track.name, source: 'local', loop: false });
+    };
+
+    const handleNavidromeSong = async (song: NavidromeSong) => {
+        const creds = await getNavidromeCredentials();
+        if (!creds) {
+            Alert.alert('Navidrome', 'Configure your server in Settings → Scrolls.');
+            return;
+        }
+        playTrack({
+            url: getStreamUrl(creds, song.id),
+            title: song.title,
+            artist: song.artist,
+            source: 'navidrome',
+            loop: false,
+        });
+    };
+
+    const handleNavSearch = async () => {
+        const query = navSearch.trim();
+        if (!query) return;
+        const creds = await getNavidromeCredentials();
+        if (!creds) {
+            Alert.alert('Navidrome', 'Configure your server in Settings → Scrolls.');
+            return;
+        }
+        setNavSearching(true);
+        setShowPlaylists(false);
         try {
-            const result = await DocumentPicker.getDocumentAsync({
-                // No type restriction — lets Android show all sources including Google Drive
-                copyToCacheDirectory: true,
-            });
+            const results = await searchSongs(creds, query);
+            setNavResults(results);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Search failed';
+            Alert.alert('Search failed', msg);
+        } finally {
+            setNavSearching(false);
+        }
+    };
 
+    const handleLoadPlaylists = async () => {
+        const creds = await getNavidromeCredentials();
+        if (!creds) {
+            Alert.alert('Navidrome', 'Configure your server in Settings → Scrolls.');
+            return;
+        }
+        setShowPlaylists(true);
+        setPlaylistLoading(true);
+        try {
+            const list = await getPlaylists(creds);
+            setPlaylists(list);
+            setNavResults([]);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Could not load playlists';
+            Alert.alert('Playlists', msg);
+        } finally {
+            setPlaylistLoading(false);
+        }
+    };
+
+    const handleSelectPlaylist = async (playlist: NavidromePlaylist) => {
+        const creds = await getNavidromeCredentials();
+        if (!creds) return;
+        setPlaylistLoading(true);
+        try {
+            const songs = await getPlaylistSongs(creds, playlist.id);
+            setNavResults(songs);
+            setShowPlaylists(false);
+        } catch {
+            Alert.alert('Error', 'Could not load playlist tracks.');
+        } finally {
+            setPlaylistLoading(false);
+        }
+    };
+
+    const handleSavedTrack = (track: SavedTrack) => {
+        if (!track.file_path) return;
+        playTrack({
+            url: `${API_ORIGIN}${track.file_path}`,
+            title: track.title,
+            source: 'saved',
+            loop: false,
+        });
+    };
+
+    const handleDeleteSavedTrack = async (id: number) => {
+        try {
+            await deleteTrack(id);
+            setSavedTracks(prev => prev.filter(t => t.id !== id));
+            if (currentTrack?.source === 'saved') stop();
+        } catch {
+            Alert.alert('Error', 'Could not remove track.');
+        }
+    };
+
+    const handleUploadToLibrary = async () => {
+        try {
+            const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
             if (result.canceled) return;
-
             const file = result.assets[0];
-
-            // Validate it's an audio file by extension
             const audioExtensions = ['.mp3', '.wav', '.aac', '.flac', '.ogg', '.m4a', '.opus'];
             const isAudio = audioExtensions.some(ext => file.name.toLowerCase().endsWith(ext))
                 || file.mimeType?.startsWith('audio/');
+            if (!isAudio) {
+                Alert.alert('Invalid File', 'Please select an audio file.');
+                return;
+            }
+            const title = file.name.replace(/\.[^/.]+$/, '');
+            const saved = await uploadTrack(title, file.uri, file.name);
+            setSavedTracks(prev => [saved, ...prev]);
+            Alert.alert('Uploaded', `"${saved.title}" added to your library.`);
+        } catch {
+            Alert.alert('Error', 'Could not upload track.');
+        }
+    };
 
+    const handleImportAudio = async () => {
+        try {
+            const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+            if (result.canceled) return;
+            const file = result.assets[0];
+            const audioExtensions = ['.mp3', '.wav', '.aac', '.flac', '.ogg', '.m4a', '.opus'];
+            const isAudio = audioExtensions.some(ext => file.name.toLowerCase().endsWith(ext))
+                || file.mimeType?.startsWith('audio/');
             if (!isAudio) {
                 Alert.alert('Invalid File', 'Please select an audio file (mp3, wav, aac, m4a, etc.)');
                 return;
             }
-
             const dirInfo = await FileSystem.getInfoAsync(OFFLINE_DIR);
             if (!dirInfo.exists) {
                 await FileSystem.makeDirectoryAsync(OFFLINE_DIR, { intermediates: true });
             }
-
             const destUri = OFFLINE_DIR + file.name;
             await FileSystem.copyAsync({ from: file.uri, to: destUri });
             const newTrack = { name: file.name, uri: destUri };
             setLocalTracks(prev => [...prev, newTrack]);
             Alert.alert('Imported', `"${file.name}" added to your offline library.`);
-        } catch (err) {
-            console.error("Import failed", err);
+        } catch {
             Alert.alert('Error', 'Could not import audio file.');
         }
     };
@@ -176,9 +300,9 @@ export default function FocusScreen() {
                 text: 'Remove', style: 'destructive', onPress: async () => {
                     try {
                         await FileSystem.deleteAsync(track.uri);
-                        if (activeTrack?.uri === track.uri) {
-                            setActiveTrack(null);
-                            setAudioUrl(null);
+                        if (activeLocalTrack?.uri === track.uri) {
+                            setActiveLocalTrack(null);
+                            if (currentTrack?.source === 'local') stop();
                         }
                         setLocalTracks(prev => prev.filter(t => t.uri !== track.uri));
                     } catch {
@@ -189,17 +313,11 @@ export default function FocusScreen() {
         ]);
     };
 
-    const handleSelectLocalTrack = (track: LocalTrack) => {
-        setActiveTrack(track);
-        setAudioUrl(track.uri);
-    };
+    const isAmbientActive = (url: string) =>
+        currentTrack?.source === 'ambient' && currentTrack.url === url;
 
-    const extractYoutubeId = (url: string) => {
-        const match = url.match(/(?:youtu\.be\/|v=|\/embed\/)([^#&?]{11})/);
-        return match ? match[1] : null;
-    };
+    const isSilence = !currentTrack;
 
-    // Sync timer state when app returns to foreground
     useEffect(() => {
         const sub = AppState.addEventListener('change', state => {
             if (state === 'active' && isActiveRef.current && sessionStartRef.current) {
@@ -222,7 +340,6 @@ export default function FocusScreen() {
         return () => { if (interval) clearInterval(interval); };
     }, [isActive, timeLeft]);
 
-    // Keep notification in sync — use ref so background updates get real value
     const timeLeftRef = useRef(timeLeft);
     const isActiveRef = useRef(isActive);
     const sessionStartRef = useRef(sessionStartTime);
@@ -232,7 +349,6 @@ export default function FocusScreen() {
     useEffect(() => { sessionStartRef.current = sessionStartTime; }, [sessionStartTime]);
     useEffect(() => { totalSecondsRef.current = customMinutes * 60; }, [customMinutes]);
 
-    // Update notification every 10s in background (Android throttles frequent updates)
     useEffect(() => {
         const interval = setInterval(() => {
             if (!isActiveRef.current || !sessionStartRef.current) return;
@@ -243,7 +359,6 @@ export default function FocusScreen() {
         return () => clearInterval(interval);
     }, [activeTaskTitle]);
 
-    // Update notification immediately on pause/resume
     useEffect(() => {
         if (sessionStartTime) {
             showSessionNotification(timeLeft, isActive, activeTaskTitle);
@@ -290,13 +405,16 @@ export default function FocusScreen() {
     const formatTime = (s: number) =>
         `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 
+    const nowPlayingLabel = currentTrack
+        ? `${currentTrack.title}${currentTrack.artist ? ` · ${currentTrack.artist}` : ''}`
+        : null;
+
     return (
         <View style={styles.container}>
             <StatusBar barStyle="light-content" />
             <LinearGradient colors={['#0a0a14', '#1a1a2e', '#16213e']} style={styles.temple}>
                 <ScrollView contentContainerStyle={styles.scrollContent}>
 
-                    {/* Header */}
                     <View style={styles.header}>
                         <Text style={styles.greekLabel}>ΝΑΟΣ</Text>
                         <Text style={styles.templeTitle}>Temple of Focus</Text>
@@ -304,7 +422,6 @@ export default function FocusScreen() {
                         <Text style={styles.quote}>"{quote}"</Text>
                     </View>
 
-                    {/* Timer Card */}
                     <View style={styles.card}>
                         <View style={styles.configSection}>
                             <View style={styles.inputGroup}>
@@ -340,6 +457,12 @@ export default function FocusScreen() {
 
                         <Text style={styles.timerText}>{formatTime(timeLeft)}</Text>
 
+                        {nowPlayingLabel && (
+                            <Text style={styles.nowPlaying} numberOfLines={1}>
+                                ♪ {nowPlayingLabel}
+                            </Text>
+                        )}
+
                         <View style={styles.actions}>
                             <TouchableOpacity onPress={toggleTimer} style={styles.primaryBtn}>
                                 <Ionicons name={isActive ? "pause" : "play"} size={22} color="#1a1a2e" />
@@ -359,32 +482,113 @@ export default function FocusScreen() {
                         )}
                     </View>
 
-                    {/* Ambient Sounds */}
                     <View style={styles.audioSection}>
                         <Text style={styles.sectionLabel}>Ambient Sounds</Text>
                         <View style={styles.audioChips}>
                             <TouchableOpacity
-                                onPress={() => setAudioUrl(null)}
-                                style={[styles.chip, !audioUrl && styles.activeChip]}
+                                onPress={handleSilence}
+                                style={[styles.chip, isSilence && styles.activeChip]}
                             >
-                                <Text style={[styles.chipText, !audioUrl && styles.activeChipText]}>Silence</Text>
+                                <Text style={[styles.chipText, isSilence && styles.activeChipText]}>Silence</Text>
                             </TouchableOpacity>
                             {AMBIENT_TRACKS.map(track => (
                                 <TouchableOpacity
                                     key={track.name}
-                                    onPress={() => setAudioUrl(track.url)}
-                                    style={[styles.chip, audioUrl === track.url && styles.activeChip]}
+                                    onPress={() => handleAmbient(track.name, track.url)}
+                                    style={[styles.chip, isAmbientActive(track.url) && styles.activeChip]}
                                 >
-                                    <Text style={[styles.chipText, audioUrl === track.url && styles.activeChipText]}>{track.name}</Text>
+                                    <Text style={[styles.chipText, isAmbientActive(track.url) && styles.activeChipText]}>{track.name}</Text>
                                 </TouchableOpacity>
                             ))}
                         </View>
                     </View>
 
-                    {/* Music Section — switches based on Encapsulation Mode */}
                     <View style={styles.musicSection}>
+                        <View style={styles.encapHeader}>
+                            <View style={styles.encapTitleRow}>
+                                <Ionicons name="musical-notes" size={18} color="#d4af37" />
+                                <Text style={styles.encapTitle}>Navidrome</Text>
+                            </View>
+                            {!navidromeConfigured && (
+                                <TouchableOpacity onPress={() => router.push('/(tabs)/settings')}>
+                                    <Text style={styles.setupLink}>Set up →</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
 
-                        {/* Encapsulation Mode Toggle */}
+                        {navidromeConfigured ? (
+                            <>
+                                <View style={styles.searchRow}>
+                                    <TextInput
+                                        style={styles.searchInput}
+                                        placeholder="Search your library..."
+                                        placeholderTextColor="#555"
+                                        value={navSearch}
+                                        onChangeText={setNavSearch}
+                                        onSubmitEditing={handleNavSearch}
+                                        returnKeyType="search"
+                                    />
+                                    <TouchableOpacity onPress={handleNavSearch} style={styles.searchBtn} disabled={navSearching}>
+                                        {navSearching ? (
+                                            <ActivityIndicator size="small" color="#1a1a2e" />
+                                        ) : (
+                                            <Ionicons name="search" size={18} color="#1a1a2e" />
+                                        )}
+                                    </TouchableOpacity>
+                                </View>
+                                <TouchableOpacity onPress={handleLoadPlaylists} style={styles.playlistBtn}>
+                                    <Ionicons name="list" size={16} color="#d4af37" />
+                                    <Text style={styles.playlistBtnText}>Browse playlists</Text>
+                                </TouchableOpacity>
+                                {playlistLoading && <ActivityIndicator color="#d4af37" style={{ marginVertical: 8 }} />}
+                                {showPlaylists && playlists.map(pl => (
+                                    <TouchableOpacity
+                                        key={pl.id}
+                                        style={styles.trackRow}
+                                        onPress={() => handleSelectPlaylist(pl)}
+                                    >
+                                        <Ionicons name="albums-outline" size={18} color="#d4af37" />
+                                        <Text style={styles.trackName}>{pl.name} ({pl.songCount})</Text>
+                                    </TouchableOpacity>
+                                ))}
+                                {navResults.map(song => (
+                                    <TouchableOpacity
+                                        key={song.id}
+                                        style={styles.trackRow}
+                                        onPress={() => handleNavidromeSong(song)}
+                                    >
+                                        <Ionicons name="play-circle-outline" size={20} color="#d4af37" />
+                                        <View style={styles.trackMeta}>
+                                            <Text style={styles.trackName} numberOfLines={1}>{song.title}</Text>
+                                            <Text style={styles.trackSub} numberOfLines={1}>{song.artist}</Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                ))}
+                            </>
+                        ) : (
+                            <Text style={styles.encapDesc}>
+                                Add your Navidrome server URL and login in Settings to stream music during focus.
+                            </Text>
+                        )}
+
+                        <View style={styles.modeDivider} />
+
+                        <View style={styles.encapHeader}>
+                            <View style={styles.encapTitleRow}>
+                                <Ionicons name="cloud-upload-outline" size={18} color="#d4af37" />
+                                <Text style={styles.encapTitle}>Personal Library</Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setLibraryOpen(true)}>
+                                <Text style={styles.setupLink}>Open ({savedTracks.length})</Text>
+                            </TouchableOpacity>
+                        </View>
+                        <TouchableOpacity onPress={handleUploadToLibrary} style={styles.importBtn}>
+                            <Ionicons name="add-circle-outline" size={18} color="#1a1a2e" />
+                            <Text style={styles.importBtnText}>Upload to library</Text>
+                        </TouchableOpacity>
+
+                        <View style={styles.modeDivider} />
+
                         <View style={styles.encapHeader}>
                             <View style={styles.encapTitleRow}>
                                 <Ionicons name="headset-outline" size={18} color="#d4af37" />
@@ -397,23 +601,18 @@ export default function FocusScreen() {
                                 thumbColor={encapsulationMode ? '#d4af37' : '#555'}
                             />
                         </View>
-
                         <Text style={styles.encapDesc}>
-                            Import audio files from your device for true offline background playback during focus sessions.
+                            Import audio files on-device for offline background playback.
                         </Text>
 
-                        <View style={styles.modeDivider} />
-
                         {encapsulationMode && (
-                            /* ── OFFLINE MODE ── */
                             <View>
                                 <TouchableOpacity onPress={handleImportAudio} style={styles.importBtn}>
                                     <Ionicons name="cloud-download-outline" size={18} color="#1a1a2e" />
                                     <Text style={styles.importBtnText}>Import Audio File</Text>
                                 </TouchableOpacity>
-
                                 {localTracks.length === 0 ? (
-                                    <Text style={styles.emptyText}>No offline tracks yet. Import an audio file to begin.</Text>
+                                    <Text style={styles.emptyText}>No offline tracks yet.</Text>
                                 ) : (
                                     localTracks.map(track => (
                                         <View key={track.uri} style={styles.trackRow}>
@@ -422,12 +621,12 @@ export default function FocusScreen() {
                                                 onPress={() => handleSelectLocalTrack(track)}
                                             >
                                                 <Ionicons
-                                                    name={activeTrack?.uri === track.uri ? "pause-circle" : "play-circle-outline"}
+                                                    name={activeLocalTrack?.uri === track.uri ? "pause-circle" : "play-circle-outline"}
                                                     size={22}
                                                     color="#d4af37"
                                                 />
                                                 <Text
-                                                    style={[styles.trackName, activeTrack?.uri === track.uri && styles.trackNameActive]}
+                                                    style={[styles.trackName, activeLocalTrack?.uri === track.uri && styles.trackNameActive]}
                                                     numberOfLines={1}
                                                 >
                                                     {track.name}
@@ -445,6 +644,14 @@ export default function FocusScreen() {
 
                 </ScrollView>
             </LinearGradient>
+
+            <LibraryModal
+                visible={libraryOpen}
+                onClose={() => setLibraryOpen(false)}
+                savedTracks={savedTracks}
+                onSelectTrack={handleSavedTrack}
+                onDeleteTrack={handleDeleteSavedTrack}
+            />
         </View>
     );
 }
@@ -479,6 +686,7 @@ const styles = StyleSheet.create({
         color: '#fff', fontSize: 18, textAlign: 'center', width: 80, alignSelf: 'center',
     },
     timerText: { fontSize: 72, fontWeight: 'bold', color: '#fff', marginVertical: 16, fontVariant: ['tabular-nums'] },
+    nowPlaying: { fontSize: 12, color: '#d4af37', marginBottom: 12, maxWidth: '100%', textAlign: 'center' },
     actions: { flexDirection: 'row', gap: 12 },
     primaryBtn: {
         backgroundColor: '#d4af37', flexDirection: 'row', alignItems: 'center',
@@ -516,21 +724,34 @@ const styles = StyleSheet.create({
     encapTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     encapTitle: { fontSize: 15, fontWeight: 'bold', color: '#d4af37' },
     encapDesc: { fontSize: 12, color: '#555', marginTop: 6, lineHeight: 17 },
+    setupLink: { fontSize: 13, color: '#d4af37', fontWeight: '600' },
     modeDivider: { height: 1, backgroundColor: 'rgba(212,175,55,0.15)', marginVertical: 14 },
+
+    searchRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+    searchInput: {
+        flex: 1, backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 10,
+        paddingHorizontal: 12, paddingVertical: 10, color: '#fff', fontSize: 14,
+    },
+    searchBtn: {
+        backgroundColor: '#d4af37', borderRadius: 10, width: 44,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    playlistBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
+    playlistBtnText: { color: '#d4af37', fontSize: 13 },
 
     importBtn: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-        backgroundColor: '#d4af37', borderRadius: 10, paddingVertical: 12, marginBottom: 14,
+        backgroundColor: '#d4af37', borderRadius: 10, paddingVertical: 12, marginTop: 10,
     },
     importBtnText: { color: '#1a1a2e', fontWeight: 'bold', fontSize: 14 },
     emptyText: { color: '#444', fontSize: 13, textAlign: 'center', marginTop: 8, lineHeight: 18 },
     trackRow: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        flexDirection: 'row', alignItems: 'center', gap: 10,
         paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
     },
     trackInfo: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, marginRight: 10 },
+    trackMeta: { flex: 1 },
     trackName: { color: '#aaa', fontSize: 13, flex: 1 },
+    trackSub: { color: '#555', fontSize: 11, marginTop: 2 },
     trackNameActive: { color: '#d4af37', fontWeight: 'bold' },
-
-    subLabel: { color: '#888', fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 },
 });

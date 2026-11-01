@@ -62,9 +62,9 @@ export default function DashboardScreen() {
         description: task.description || '',
         is_urgent: task.is_urgent,
         is_important: task.is_important,
-        due_date: task.due_date || null,
+        due_date: task.due_date ?? undefined,
         status: newStatus,
-        goal_id: task.goal_id || null,
+        goal_id: task.goal_id ?? undefined,
         subtasks: task.subtasks || [],
       });
       setTasks(prev => prev.map(t => t.id === task.id ? updated : t));

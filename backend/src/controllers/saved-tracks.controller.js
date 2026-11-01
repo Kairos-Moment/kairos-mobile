@@ -6,24 +6,24 @@ const path = require('path');
 const createTrack = async (req, res) => {
     try {
         const userId = req.user.id;
-        const { title, youtube_id } = req.body;
-        const file = req.file; // set by multer if uploading
+        const { title } = req.body;
+        const file = req.file;
 
         if (!title) {
             return res.status(400).json({ message: "Title is required." });
         }
-        if (!youtube_id && !file) {
-            return res.status(400).json({ message: "A YouTube ID or audio file is required." });
+        if (!file) {
+            return res.status(400).json({ message: "An audio file is required." });
         }
 
-        const filePath = file ? `/uploads/${file.filename}` : null;
+        const filePath = `/uploads/${file.filename}`;
 
         const query = `
             INSERT INTO saved_tracks (user_id, title, youtube_id, file_path)
-            VALUES ($1, $2, $3, $4)
+            VALUES ($1, $2, NULL, $3)
             RETURNING *;
         `;
-        const results = await pool.query(query, [userId, title, youtube_id || null, filePath]);
+        const results = await pool.query(query, [userId, title, filePath]);
         res.status(201).json(results.rows[0]);
     } catch (error) {
         console.error("Error saving track:", error);

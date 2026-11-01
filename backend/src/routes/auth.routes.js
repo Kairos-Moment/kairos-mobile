@@ -169,11 +169,13 @@ router.get("/github/mobile", (req, res) => {
   const { redirect_uri } = req.query;
   const mobileRedirectUri = redirect_uri || process.env.MOBILE_REDIRECT_URI;
 
+  // Store the app's deep link URI in state — GitHub never sees it
   const state = Buffer.from(JSON.stringify({ mobileRedirectUri })).toString('base64');
 
   const params = new URLSearchParams({
     client_id: process.env.GITHUB_CLIENT_ID_MOBILE,
-    redirect_uri: mobileRedirectUri,
+    // Always use the registered backend callback URL — not the app deep link
+    redirect_uri: process.env.GITHUB_CALLBACK_URL_MOBILE,
     scope: 'read:user',
     state,
   });

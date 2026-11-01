@@ -10,6 +10,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { MusicPlayerProvider } from '../contexts/MusicPlayerContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -36,17 +37,13 @@ function RootLayoutNav() {
     SplashScreen.hideAsync();
 
     const inTabsGroup = segments[0] === '(tabs)';
-    const inLoginSuccess = segments[0] === 'login-success' as any;
-
-    // Don't interfere while login-success is processing the token
-    if (inLoginSuccess) return;
 
     if (isAuthenticated && !inTabsGroup) {
       router.replace('/(tabs)');
     } else if (!isAuthenticated && inTabsGroup) {
       router.replace('/login');
     }
-  }, [isAuthenticated, isLoading, segments]);
+  }, [isAuthenticated, isLoading, segments, router]);
 
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener(response => {
@@ -90,7 +87,9 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <RootLayoutNav />
+      <MusicPlayerProvider>
+        <RootLayoutNav />
+      </MusicPlayerProvider>
     </AuthProvider>
   );
 }

@@ -7,6 +7,7 @@ import React, {
     useState,
 } from 'react';
 import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { shouldRepeatTrack } from '@/utils/audioPlayback';
 
 export type TrackSource = 'ambient' | 'local' | 'navidrome' | 'saved';
 
@@ -26,6 +27,7 @@ interface MusicPlayerContextValue {
     stop: () => void;
     pause: () => void;
     resume: () => void;
+    restartCurrentTrack: () => void;
     setFocusSessionActive: (active: boolean) => void;
     hasTrack: boolean;
 }
@@ -48,8 +50,8 @@ export function MusicPlayerProvider({ children }: { children: React.ReactNode })
 
     useEffect(() => {
         if (!player) return;
-        player.loop = currentTrack?.loop ?? false;
-    }, [player, currentTrack?.loop]);
+        player.loop = shouldRepeatTrack(currentTrack);
+    }, [player, currentTrack]);
 
     const syncPlayback = useCallback(() => {
         if (!player || !streamUrl) return;
@@ -85,6 +87,16 @@ export function MusicPlayerProvider({ children }: { children: React.ReactNode })
         }
     }, [player, streamUrl]);
 
+    const restartCurrentTrack = useCallback(() => {
+        if (!player || !streamUrl) return;
+        void player.seekTo(0);
+        if (focusSessionActiveRef.current) {
+            player.play();
+        } else {
+            player.pause();
+        }
+    }, [player, streamUrl]);
+
     const setFocusSessionActive = useCallback(
         (active: boolean) => {
             focusSessionActiveRef.current = active;
@@ -100,6 +112,7 @@ export function MusicPlayerProvider({ children }: { children: React.ReactNode })
         stop,
         pause,
         resume,
+        restartCurrentTrack,
         setFocusSessionActive,
         hasTrack: !!streamUrl,
     };

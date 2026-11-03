@@ -56,6 +56,7 @@ export default function FocusScreen() {
         playTrack,
         stop,
         currentTrack,
+        restartCurrentTrack,
         setFocusSessionActive,
     } = useMusicPlayer();
 
@@ -152,7 +153,7 @@ export default function FocusScreen() {
 
     const handleSelectLocalTrack = (track: LocalTrack) => {
         setActiveLocalTrack(track);
-        playTrack({ url: track.uri, title: track.name, source: 'local', loop: false });
+        playTrack({ url: track.uri, title: track.name, source: 'local', loop: true });
     };
 
     const handleNavidromeSong = async (song: NavidromeSong) => {
@@ -390,9 +391,11 @@ export default function FocusScreen() {
     };
 
     const resetTimer = () => {
+        setFocusSessionActive(false);
         setIsActive(false);
         setTimeLeft(customMinutes * 60);
         setSessionStartTime(null);
+        restartCurrentTrack();
         dismissSessionNotification();
     };
 
